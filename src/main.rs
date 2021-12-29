@@ -1,11 +1,73 @@
+use chrono::{DateTime, FixedOffset, TimeZone};
+use git2::{BranchType, Oid, Repository};
 use std::io;
 use std::io::{Read, Write};
-use git2::Repository;
+use std::string::FromUtf8Error;
 
 fn main() -> Result<(), Error> {
+    let mut stdout = io::stdout();
+
     let repo = Repository::open_from_env()?;
 
+    for br in get_branches(&repo)? {
+        println!("{:?}", br);
+    }
+
     Ok(())
+}
+
+// shortcut for Result<T, Error>
+// 第二个 Result 要全路径指定，否则会形成递归定义
+type Result<T, E = Error> = std::result::Result<T, E>;
+
+fn get_branches(repo: &Repository) -> Result<Vec<Branch>> {
+    // let mut branches = vec![];
+    // for br in repo.branches(Some(BranchType::Local))? {
+    //     let (branch, _) = br?;
+    //     let name = String::from_utf8(branch.name_bytes()?.to_vec())?;
+    //     // stdout.write_all(name)?;
+    //     // write!(stdout, "\n")?;
+    //     let commit = branch.get().peel_to_commit()?;
+    //     let commit_id = commit.id();
+    //     let commit_time = commit.time();
+    //     println!("sign: {}", commit_time.sign());
+    //     let commit_time = FixedOffset::east(commit_time.offset_minutes() * 60).timestamp(commit_time.seconds(), 0);
+    //     // write!(stdout, "{:?}\n", datetime)?;
+    //     branches.push(Branch{
+    //         commit_time,
+    //         commit_id,
+    //         name,
+    //     });
+    // }
+
+    // Ok(branches)
+
+    repo.branches(Some(BranchType::Local))?
+        .map(|br| -> Result<Branch> {
+            let (branch, _) = br?;
+            let name = String::from_utf8(branch.name_bytes()?.to_vec())?;
+            // stdout.write_all(name)?;
+            // write!(stdout, "\n")?;
+            let commit = branch.get().peel_to_commit()?;
+            let commit_id = commit.id();
+            let commit_time = commit.time();
+            // println!("sign: {}", commit_time.sign());
+            let commit_time = FixedOffset::east(commit_time.offset_minutes() * 60)
+                .timestamp(commit_time.seconds(), 0);
+            Ok(Branch {
+                commit_time,
+                commit_id,
+                name,
+            })
+        })
+        .collect()
+}
+
+#[derive(Debug)]
+struct Branch {
+    commit_time: DateTime<FixedOffset>,
+    commit_id: Oid,
+    name: String,
 }
 
 // fn main() -> Result<(), Error>{
@@ -47,4 +109,7 @@ enum Error {
     // IoError(#[from] io::Error),
     #[error(transparent)]
     GitError(#[from] git2::Error),
+
+    #[error(transparent)]
+    Utf8Error(#[from] FromUtf8Error),
 }
