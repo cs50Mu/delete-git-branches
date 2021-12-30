@@ -26,13 +26,21 @@ fn main() {
 
         // mutable loop
         for br in &mut branches {
+            if br.is_head {
+                write!(
+                    stdout,
+                    "ignoring {}, because it's the current branch\r\n",
+                    br.name
+                )?;
+                continue;
+            }
             match get_user_action(&mut stdout, &mut stdin, br)? {
                 BranchAction::Keep => {
                     write!(stdout, "keep this br\r\n")?;
                 } //
                 BranchAction::Delete => {
-                    write!(stdout, "delete this br\r\n")?;
                     br.delete()?;
+                    write!(stdout, "deleted {} ({})\r\n", br.name, br.commit_id)?;
                 } //
                 BranchAction::Quit => {
                     write!(stdout, "\r\n")?;
@@ -115,6 +123,9 @@ fn get_branches(repo: &Repository) -> Result<Vec<Branch>> {
                 commit_time,
                 commit_id,
                 name,
+                // 下面两个字段若换顺序则会报错：value borrowed after move
+                // 因为 is_head 需要通过 borrow 来获取，而 branch 字段是 move 进去的
+                is_head: branch.is_head(),
                 branch,
             })
         })
@@ -137,12 +148,15 @@ struct Branch<'repo> {
     commit_time: DateTime<FixedOffset>,
     commit_id: Oid,
     name: String,
+    is_head: bool,
     branch: git2::Branch<'repo>,
 }
 
 impl Branch<'_> {
     fn delete(&mut self) -> Result<()> {
-        Ok(self.branch.delete()?)
+        // Ok(self.branch.delete()?)
+        // 下面这种写法貌似更优雅？
+        self.branch.delete().map_err(From::from)
     }
 }
 
