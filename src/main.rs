@@ -24,6 +24,7 @@ fn main() {
             write!(stdout, "found no branches(ignore master / main branch)\r\n")?;
         }
 
+        let mut deleted_branch = None;
         // mutable loop
         for br in &mut branches {
             if br.is_head {
@@ -41,7 +42,20 @@ fn main() {
                 BranchAction::Delete => {
                     br.delete()?;
                     write!(stdout, "deleted {} ({})\r\n", br.name, br.commit_id)?;
+                    deleted_branch = Some(br);
                 } //
+                BranchAction::Undo => {
+                    // mutable reference 没有自动实现 copy，不可变reference 才会自动实现 copy
+                    // 这里再加了一层引用就能编译通过了，可能是因为最外面的 reference 是不可变的了
+                    if let Some(branch) = &deleted_branch {
+                        // 然后后面的写法因为编译器的自动 deref，跟之前的写法一样
+                        let commit = repo.find_commit(branch.commit_id)?;
+                        repo.branch(&branch.name, &commit, false)?;
+                    } else {
+                        write!(stdout, "cannot find anything to undo!\r\n")?;
+                    }
+                    deleted_branch = None;
+                }
                 BranchAction::Quit => {
                     write!(stdout, "\r\n")?;
                     break;
@@ -96,6 +110,7 @@ fn get_user_action(
             write!(stdout, "Here are what the commands mean:\r\n")?;
             write!(stdout, "k - Keep the branch\r\n")?;
             write!(stdout, "d - Delete the branch\r\n")?;
+            write!(stdout, "u - Undo the delete action\r\n")?;
             write!(stdout, "s - Show the branch\r\n")?;
             write!(stdout, "q - Quit\r\n")?;
             write!(stdout, "? - Print this help\r\n")?;
@@ -181,6 +196,7 @@ enum Error {
 enum BranchAction {
     Keep,
     Delete,
+    Undo,
     Help,
     Show,
     Quit,
@@ -192,6 +208,7 @@ impl TryFrom<char> for BranchAction {
         match value {
             'k' => Ok(BranchAction::Keep),
             'd' => Ok(BranchAction::Delete),
+            'u' => Ok(BranchAction::Undo),
             '?' => Ok(BranchAction::Help),
             's' => Ok(BranchAction::Show),
             'q' => Ok(BranchAction::Quit),
