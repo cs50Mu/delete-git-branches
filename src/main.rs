@@ -1,6 +1,5 @@
 use chrono::{DateTime, FixedOffset, TimeZone};
 use git2::{BranchType, Oid, Repository};
-use std::fmt::write;
 use std::io::{self, Bytes, Stdin, Stdout};
 use std::io::{Read, Write};
 use std::string::FromUtf8Error;
@@ -27,41 +26,7 @@ fn main() {
         let mut deleted_branch = None;
         // mutable loop
         for br in &mut branches {
-            if br.is_head {
-                write!(
-                    stdout,
-                    "ignoring {}, because it's the current branch\r\n",
-                    br.name
-                )?;
-                continue;
-            }
-            match get_user_action(&mut stdout, &mut stdin, br)? {
-                BranchAction::Keep => {
-                    write!(stdout, "keep this br\r\n")?;
-                } //
-                BranchAction::Delete => {
-                    br.delete()?;
-                    write!(stdout, "deleted {} ({})\r\n", br.name, br.commit_id)?;
-                    deleted_branch = Some(br);
-                } //
-                BranchAction::Undo => {
-                    // mutable reference 没有自动实现 copy，不可变reference 才会自动实现 copy
-                    // 这里再加了一层引用就能编译通过了，可能是因为最外面的 reference 是不可变的了
-                    if let Some(branch) = &deleted_branch {
-                        // 然后后面的写法因为编译器的自动 deref，跟之前的写法一样
-                        let commit = repo.find_commit(branch.commit_id)?;
-                        repo.branch(&branch.name, &commit, false)?;
-                    } else {
-                        write!(stdout, "cannot find anything to undo!\r\n")?;
-                    }
-                    deleted_branch = None;
-                }
-                BranchAction::Quit => {
-                    write!(stdout, "\r\n")?;
-                    break;
-                }
-                _ => {}
-            }
+            act_on_branch(br, &mut stdout, &mut stdin, &mut deleted_branch, &repo)?;
         }
         Ok(())
     })();
@@ -75,6 +40,54 @@ fn main() {
             std::process::exit(1);
         }
     }
+}
+
+// 两个 Branch 需要有一样的生命周期
+// br 和 *deleted_branch 需要有一样的生命周期（因为下面有这一句：`*deleted_branch = Some(br);`）
+fn act_on_branch<'a, 'b>(
+    br: &'a mut Branch<'b>,
+    stdout: &mut Stdout,
+    stdin: &mut Bytes<Stdin>,
+    deleted_branch: &mut Option<&'a mut Branch<'b>>,
+    repo: &Repository,
+) -> Result<()> {
+    if br.is_head {
+        write!(
+            stdout,
+            "ignoring {}, because it's the current branch\r\n",
+            br.name
+        )?;
+        return Ok(());
+    }
+    match get_user_action(stdout, stdin, br)? {
+        BranchAction::Keep => {
+            write!(stdout, "keep this br\r\n")?;
+        } //
+        BranchAction::Delete => {
+            br.delete()?;
+            write!(stdout, "deleted {} ({})\r\n", br.name, br.commit_id)?;
+            *deleted_branch = Some(br);
+        } //
+        BranchAction::Undo => {
+            // mutable reference 没有自动实现 copy，不可变reference 才会自动实现 copy
+            // 这里再加了一层引用就能编译通过了，可能是因为最外面的 reference 是不可变的了
+            if let Some(branch) = &deleted_branch {
+                // 然后后面的写法因为编译器的自动 deref，跟之前的写法一样
+                let commit = repo.find_commit(branch.commit_id)?;
+                repo.branch(&branch.name, &commit, false)?;
+            } else {
+                write!(stdout, "cannot find anything to undo!\r\n")?;
+            }
+            *deleted_branch = None;
+            return act_on_branch(br, stdout, stdin, deleted_branch, repo);
+        }
+        BranchAction::Quit => {
+            write!(stdout, "\r\n")?;
+            return Ok(());
+        }
+        _ => {}
+    }
+    Ok(())
 }
 
 fn get_user_action(
